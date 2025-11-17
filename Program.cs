@@ -1,11 +1,16 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
+
+builder.Services.AddDbContext<ApplicationDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
 
 var app = builder.Build();
 
@@ -17,18 +22,16 @@ if (app.Environment.IsDevelopment())
 
 // app.UseHttpsRedirection();
 
-// --- 2. In-Memory Data Store ---
-var now = DateTime.UtcNow;
-// Use a static list as an in-memory database replacement for demonstration
-var users = new List<User>
+using (var scope = app.Services.CreateScope())
 {
-    new(Guid.NewGuid(), "Jane Doe", "jane.doe@example.com", now, now),
-    new(Guid.NewGuid(), "John Smith", "john.smith@example.com",now, now),
-};
+    var dbContext = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
+    dbContext.Database.Migrate();
+}
+
 
 
 // POST /users (Create)
-app.MapPost("/users", ([FromBody] CreateUserRequest request) =>
+app.MapPost("/users", async ([FromBody] CreateUserRequest request, ApplicationDbContext db) =>
 {
     if (string.IsNullOrWhiteSpace(request.Name) || string.IsNullOrWhiteSpace(request.Email))
     {
@@ -36,11 +39,7 @@ app.MapPost("/users", ([FromBody] CreateUserRequest request) =>
     }
 
     var timestamp = DateTime.UtcNow;
-    if(users.Any(u => u.Email.Equals(request.Email, StringComparison.OrdinalIgnoreCase)))
-    {
-        return Results.Conflict($"A user with the email {request.Email} already exists.");
-    }
-    
+
     var newUser = new User(
         Id: Guid.NewGuid(),
         Name: request.Name,
@@ -49,7 +48,8 @@ app.MapPost("/users", ([FromBody] CreateUserRequest request) =>
         timestamp
     );
 
-    users.Add(newUser);
+    db.Users.Add(newUser);
+    await db.SaveChangesAsync();
 
     // Returns a 201 Created status with the location header pointing to the new resource
     return Results.Created($"/users/{newUser.Id}", newUser);
@@ -59,23 +59,26 @@ app.MapPost("/users", ([FromBody] CreateUserRequest request) =>
 
 
 // GET /users (Read All)
-app.MapGet("/users", () => Results.Ok(users))
+app.MapGet("/users", async (ApplicationDbContext db) =>
+{
+    var users = await db.Users.ToListAsync();
+    return Results.Ok(users);
+
+})
 .WithName("GetAllUsers")
 .WithSummary("Retrieves a list of all users.");
 
 
 // GET /users/{id} (Read Single)
-app.MapGet("/users/{id:guid}", (Guid id) =>
+app.MapGet("/users/{id:guid}", async (Guid id, ApplicationDbContext db) =>
 {
-    var user = users.FirstOrDefault(u => u.Id == id);
+    var user = await db.Users.FindAsync(id);
 
     if (user is null)
     {
-        // Returns a 404 Not Found status
         return Results.NotFound($"User with ID {id} not found.");
     }
 
-    // Returns a 200 OK status with the user data
     return Results.Ok(user);
 })
 .WithName("GetUserById")
@@ -83,9 +86,10 @@ app.MapGet("/users/{id:guid}", (Guid id) =>
 
 
 // PUT /users/{id} (Update)
-app.MapPut("/users/{id:guid}", (Guid id, [FromBody] UpdateUserRequest request) =>
+app.MapPut("/users/{id:guid}", async (Guid id, [FromBody] UpdateUserRequest request, ApplicationDbContext db) =>
 {
-    var existingUser = users.FirstOrDefault(u => u.Id == id);
+        var existingUser = await db.Users.FindAsync(id);
+
 
     if (existingUser is null)
     {
@@ -105,10 +109,8 @@ app.MapPut("/users/{id:guid}", (Guid id, [FromBody] UpdateUserRequest request) =
         UpdatedAt = DateTime.UtcNow
     };
 
-    // Find the index of the old user and replace it with the updated one
-    var index = users.FindIndex(u => u.Id == id);
-    users[index] = updatedUser;
-
+    db.Entry(existingUser).CurrentValues.SetValues(updatedUser);
+    await db.SaveChangesAsync();
     // Returns a 200 OK status with the updated user data
     return Results.Ok(updatedUser);
 })
@@ -117,9 +119,9 @@ app.MapPut("/users/{id:guid}", (Guid id, [FromBody] UpdateUserRequest request) =
 
 
 // DELETE /users/{id} (Delete)
-app.MapDelete("/users/{id:guid}", (Guid id) =>
+app.MapDelete("/users/{id:guid}", async (Guid id, ApplicationDbContext db) =>
 {
-    var userToRemove = users.FirstOrDefault(u => u.Id == id);
+    var userToRemove = await db.Users.FindAsync(id);
 
     if (userToRemove is null)
     {
@@ -127,7 +129,8 @@ app.MapDelete("/users/{id:guid}", (Guid id) =>
         return Results.NoContent();
     }
 
-    users.Remove(userToRemove);
+    db.Users.Remove(userToRemove);
+    await db.SaveChangesAsync();
 
     // Returns a 204 No Content status, which is standard for a successful DELETE
     return Results.NoContent();
@@ -139,7 +142,7 @@ app.MapDelete("/users/{id:guid}", (Guid id) =>
 app.Run();
 
 
-record User(Guid Id, 
+public record User(Guid Id, 
     string Name, 
     string Email, 
     DateTime CreatedAt,

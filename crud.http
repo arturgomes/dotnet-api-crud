@@ -1,0 +1,64 @@
+@host = http://localhost:5263
+
+// Variable to store the ID of the user created in the POST request
+@createdId = 3e5d018d-f54b-4bca-b424-53c9a6981c93
+
+// --- 1. GET ALL USERS (Initial State) ---
+GET {{host}}/users
+Accept: application/json
+
+###
+
+// --- 2. POST (CREATE) A NEW USER ---
+// Captures the new user's ID to the @createdId variable
+POST {{host}}/users
+Content-Type: application/json
+
+{
+    "name": "Artur Gomes",
+    "email": "artur.gomes@testcorp.com"
+}
+
+###
+
+// --- 3. GET SINGLE USER (READ) ---
+// Uses the ID captured in the previous POST request
+GET {{host}}/users/{{createdId}}
+Accept: application/json
+
+###
+
+// --- 4. PUT (UPDATE) THE USER ---
+// Updates the name and email of the user created in Step 2
+PUT {{host}}/users/{{createdId}}
+Content-Type: application/json
+
+{
+    "name": "Artur Oliveira Gomes",
+    "email": "artur.gomes@testcorp.com"
+}
+
+###
+
+// --- 5. GET SINGLE USER (Verify Update) ---
+GET {{host}}/users/{{createdId}}
+Accept: application/json
+
+###
+
+// --- 6. DELETE THE USER ---
+DELETE {{host}}/users/{{createdId}}
+
+###
+
+// --- 7. GET SINGLE USER (Verify Deletion - Expect 404 Not Found) ---
+GET {{host}}/users/{{createdId}}
+Accept: application/json
+
+###
+
+// --- 8. GET ALL USERS (Final State - Should only show initial seed data) ---
+GET {{host}}/users
+Accept: application/json
+
+###
